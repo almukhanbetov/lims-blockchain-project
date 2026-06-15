@@ -1,0 +1,36 @@
+# ── Секреты и окружение ───────────────────────────────────────────────────────
+adapter/.env
+.env
+.env.local
+.env.*.local
+
+# ── Go (adapter) ──────────────────────────────────────────────────────────────
+adapter/vendor/
+adapter/adapter
+
+# ── Node.js (blockchain + ui) ─────────────────────────────────────────────────
+node_modules/
+blockchain/node_modules/
+ui/node_modules/
+
+# ── Hardhat (blockchain) ──────────────────────────────────────────────────────
+blockchain/artifacts/
+blockchain/cache/
+blockchain/deployments/
+blockchain/.openzeppelin/
+
+# ── React / Vite (ui) ─────────────────────────────────────────────────────────
+ui/dist/
+ui/.vite/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-volumes/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,34 @@
+services:
+  senaite:
+    image: senaite/senaite:2.x
+    container_name: senaite_lims
+    ports:
+      - "8080:8080"
+    restart: always
+    volumes:
+      - senaite_data:/data
+
+  adapter:
+    build:
+      context: ./adapter
+    container_name: lims_blockchain_adapter
+    ports:
+      - "8090:8090"
+    env_file:
+      - ./adapter/.env
+    depends_on:
+      - senaite
+    restart: always
+
+  ui:
+    build:
+      context: ./ui
+    container_name: lims_blockchain_ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - adapter
+    restart: always
+
+volumes:
+  senaite_data:
