@@ -1,0 +1,38 @@
+# VPS production compose — образы из Docker Hub
+# Расположение на сервере: /opt/lims-blockchain/docker-compose.yml
+
+services:
+  senaite:
+    image: senaite/senaite:2.x
+    container_name: senaite_lims
+    ports:
+      - "8080:8080"
+    restart: always
+    volumes:
+      - senaite_data:/data
+
+  adapter:
+    image: ${DOCKERHUB_USERNAME}/lims-adapter:latest
+    container_name: lims_blockchain_adapter
+    ports:
+      - "8090:8090"
+    environment:
+      - PORT=8090
+      - SENAITE_URL=http://senaite:8080
+      - BLOCKCHAIN_RPC=http://blockchain:8545
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-}
+    depends_on:
+      - senaite
+    restart: always
+
+  ui:
+    image: ${DOCKERHUB_USERNAME}/lims-blockchain-ui:latest
+    container_name: lims_blockchain_ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - adapter
+    restart: always
+
+volumes:
+  senaite_data:

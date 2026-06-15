@@ -3,6 +3,7 @@ adapter/.env
 .env
 .env.local
 .env.*.local
+.env.prod
 
 # ── Go (adapter) ──────────────────────────────────────────────────────────────
 adapter/vendor/
