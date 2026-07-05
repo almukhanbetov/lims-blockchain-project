@@ -75,7 +75,7 @@ jobs:
 
   # ── Job 3: Деплой на VPS ───────────────────────────────────────────────────
   deploy:
-    name: Deploy to VPS (188.244.115.135)
+    name: Deploy to VPS (109.235.117.99)
     runs-on: ubuntu-latest
     needs: build-push
 
@@ -134,8 +134,8 @@ jobs:
       - name: Summary
         run: |
           echo "### Deployed to VPS" >> $GITHUB_STEP_SUMMARY
-          echo "- Host: \`188.244.115.135\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Host: \`109.235.117.99\`" >> $GITHUB_STEP_SUMMARY
           echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- UI: http://188.244.115.135:3000" >> $GITHUB_STEP_SUMMARY
-          echo "- Adapter: http://188.244.115.135:8090" >> $GITHUB_STEP_SUMMARY
-          echo "- LIMS: http://188.244.115.135:8080" >> $GITHUB_STEP_SUMMARY
+          echo "- UI: http://109.235.117.99:3000" >> $GITHUB_STEP_SUMMARY
+          echo "- Adapter: http://@109.235.117.99:8090" >> $GITHUB_STEP_SUMMARY
+          echo "- LIMS: http://109.235.117.99:8080" >> $GITHUB_STEP_SUMMARY
