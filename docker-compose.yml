@@ -8,6 +8,14 @@ services:
     volumes:
       - senaite_data:/data
 
+  blockchain:
+    build:
+      context: ./blockchain
+    container_name: lims_blockchain_node
+    ports:
+      - "8545:8545"
+    restart: always
+
   adapter:
     build:
       context: ./adapter
@@ -17,7 +25,10 @@ services:
     env_file:
       - ./adapter/.env
     depends_on:
-      - senaite
+      senaite:
+        condition: service_started
+      blockchain:
+        condition: service_healthy
     restart: always
 
   ui:

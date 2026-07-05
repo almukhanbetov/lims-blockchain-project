@@ -11,6 +11,13 @@ services:
     volumes:
       - senaite_data:/data
 
+  blockchain:
+    image: ${DOCKERHUB_USERNAME}/lims-blockchain-node:latest
+    container_name: lims_blockchain_node
+    ports:
+      - "8545:8545"
+    restart: always
+
   adapter:
     image: ${DOCKERHUB_USERNAME}/lims-adapter:latest
     container_name: lims_blockchain_adapter
@@ -20,9 +27,13 @@ services:
       - PORT=8090
       - SENAITE_URL=http://senaite:8080
       - BLOCKCHAIN_RPC=http://blockchain:8545
-      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x5FbDB2315678afecb367f032d93F642f64180aa3}
+      - ADAPTER_PRIVATE_KEY=${ADAPTER_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
     depends_on:
-      - senaite
+      senaite:
+        condition: service_started
+      blockchain:
+        condition: service_healthy
     restart: always
 
   ui:

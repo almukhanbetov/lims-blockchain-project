@@ -37,11 +37,14 @@ type HashRecord struct {
 	RegisteredAt time.Time `json:"registered_at"`
 }
 
-// In-memory registry simulates the blockchain state cache.
-// When CONTRACT_ADDRESS is set, operations are forwarded to the Ethereum smart contract.
+// In-memory registry acts as a fast-read cache of whatever is on chain.
+// When CONTRACT_ADDRESS/BLOCKCHAIN_RPC are set and reachable, every write is
+// also forwarded to the LimsHashRegistry smart contract via bc.
 var (
 	registry   = make(map[string]HashRecord)
 	registryMu sync.RWMutex
+
+	bc *BlockchainClient
 )
 
 // calculateHash produces a deterministic SHA-256 hash from stable ordered fields.
@@ -86,11 +89,18 @@ func main() {
 
 	contractAddress := os.Getenv("CONTRACT_ADDRESS")
 	blockchainRPC := os.Getenv("BLOCKCHAIN_RPC")
+	privateKey := os.Getenv("ADAPTER_PRIVATE_KEY")
 
-	if contractAddress != "" {
-		log.Printf("Blockchain integration active: RPC=%s Contract=%s", blockchainRPC, contractAddress)
+	if contractAddress != "" && blockchainRPC != "" && privateKey != "" {
+		client, err := NewBlockchainClient(blockchainRPC, contractAddress, privateKey)
+		if err != nil {
+			log.Printf("Blockchain integration disabled, falling back to local registry: %v", err)
+		} else {
+			bc = client
+			log.Printf("Blockchain integration active: RPC=%s Contract=%s", blockchainRPC, contractAddress)
+		}
 	} else {
-		log.Println("Running in local registry mode (set CONTRACT_ADDRESS to enable blockchain)")
+		log.Println("Running in local registry mode (set CONTRACT_ADDRESS, BLOCKCHAIN_RPC and ADAPTER_PRIVATE_KEY to enable blockchain)")
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -104,13 +114,14 @@ func main() {
 		registryMu.RUnlock()
 
 		c.JSON(http.StatusOK, gin.H{
-			"service":          "LIMS Blockchain Adapter",
-			"version":          "1.0.0",
-			"role":             "Intelligent control layer between LIMS and blockchain",
-			"integrity_model":  "SHA-256",
-			"blockchain_rpc":   blockchainRPC,
-			"contract_address": contractAddress,
-			"registered_hashes": count,
+			"service":              "LIMS Blockchain Adapter",
+			"version":              "1.0.0",
+			"role":                 "Intelligent control layer between LIMS and blockchain",
+			"integrity_model":      "SHA-256",
+			"blockchain_rpc":       blockchainRPC,
+			"contract_address":     contractAddress,
+			"blockchain_connected": bc != nil,
+			"registered_hashes":    count,
 			"endpoints": []string{
 				"GET  /",
 				"POST /events/hash",
@@ -148,22 +159,14 @@ func main() {
 			RegisteredAt: time.Now().UTC(),
 		}
 
-		// Store in local registry (and optionally forward to smart contract)
+		// Store in local registry as a read cache
 		registryMu.Lock()
 		registry[event.LimsRecordID] = record
 		registryMu.Unlock()
 
-		// TODO: when CONTRACT_ADDRESS is set, call registerHash() on LimsHashRegistry contract
-		// via go-ethereum ethclient:
-		//   client, _ := ethclient.Dial(blockchainRPC)
-		//   instance, _ := contract.NewLimsHashRegistry(common.HexToAddress(contractAddress), client)
-		//   hashBytes := [32]byte{}
-		//   copy(hashBytes[:], decoded)
-		//   instance.RegisterHash(auth, limsRecordId, eventType, hashBytes, status)
-
 		log.Printf("[HASH] %s | %s | %s", event.LimsRecordID, event.EventType, hash[:16]+"...")
 
-		c.JSON(http.StatusOK, gin.H{
+		response := gin.H{
 			"success":        true,
 			"lims_record_id": event.LimsRecordID,
 			"event_type":     event.EventType,
@@ -171,8 +174,23 @@ func main() {
 			"timestamp":      event.Timestamp,
 			"status":         event.Status,
 			"registered_at":  record.RegisteredAt,
-			"message":        "Hash registered in blockchain",
-		})
+		}
+
+		if bc != nil {
+			txHash, err := bc.RegisterHash(event.LimsRecordID, event.EventType, hash, event.Status)
+			if err != nil {
+				log.Printf("[HASH] blockchain registerHash failed for %s: %v", event.LimsRecordID, err)
+				response["message"] = "Hash cached locally, blockchain registration failed"
+				response["blockchain_error"] = err.Error()
+			} else {
+				response["message"] = "Hash registered in blockchain"
+				response["tx_hash"] = txHash
+			}
+		} else {
+			response["message"] = "Hash registered in local registry (blockchain not connected)"
+		}
+
+		c.JSON(http.StatusOK, response)
 	})
 
 	// GET /events — returns all registered hash records
@@ -207,6 +225,32 @@ func main() {
 
 		computedHash := calculateHash(event)
 
+		if bc != nil {
+			verified, err := bc.VerifyHash(event.LimsRecordID, computedHash)
+			if err != nil {
+				log.Printf("[VERIFY ERROR] %s: %v", event.LimsRecordID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"verified": false,
+					"message":  "Blockchain verification failed: " + err.Error(),
+					"hash":     computedHash,
+				})
+				return
+			}
+
+			message := "Data integrity verified on blockchain"
+			if !verified {
+				message = "Hash mismatch on blockchain. Data may have been changed"
+			}
+			log.Printf("[VERIFY %v] %s (source: blockchain)", verified, event.LimsRecordID)
+			c.JSON(http.StatusOK, gin.H{
+				"verified": verified,
+				"message":  message,
+				"hash":     computedHash,
+				"source":   "blockchain",
+			})
+			return
+		}
+
 		registryMu.RLock()
 		stored, exists := registry[event.LimsRecordID]
 		registryMu.RUnlock()
@@ -216,24 +260,27 @@ func main() {
 				"verified": false,
 				"message":  "No hash registered for this LIMS record ID",
 				"hash":     computedHash,
+				"source":   "local_cache",
 			})
 			return
 		}
 
 		if stored.DataHash == computedHash {
-			log.Printf("[VERIFY OK] %s", event.LimsRecordID)
+			log.Printf("[VERIFY OK] %s (source: local_cache)", event.LimsRecordID)
 			c.JSON(http.StatusOK, gin.H{
 				"verified": true,
 				"message":  "Data integrity verified",
 				"hash":     computedHash,
+				"source":   "local_cache",
 			})
 		} else {
-			log.Printf("[VERIFY FAIL] %s — hash mismatch", event.LimsRecordID)
+			log.Printf("[VERIFY FAIL] %s — hash mismatch (source: local_cache)", event.LimsRecordID)
 			c.JSON(http.StatusOK, gin.H{
 				"verified":      false,
 				"message":       "Hash mismatch. Data may have been changed",
 				"computed_hash": computedHash,
 				"stored_hash":   stored.DataHash,
+				"source":        "local_cache",
 			})
 		}
 	})

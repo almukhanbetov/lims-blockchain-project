@@ -1,10 +1,10 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
 # Copy source first, then run go mod tidy to resolve and download all dependencies
 COPY go.mod ./
-COPY main.go ./
+COPY main.go blockchain.go ./
 
 RUN go mod tidy && \
     CGO_ENABLED=0 GOOS=linux go build -o adapter .

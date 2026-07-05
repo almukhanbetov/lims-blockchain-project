@@ -20,7 +20,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24'
           cache-dependency-path: adapter/go.mod
 
       - name: Download dependencies
@@ -50,6 +50,17 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push — blockchain
+        uses: docker/build-push-action@v5
+        with:
+          context: ./blockchain
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/lims-blockchain-node:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/lims-blockchain-node:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build & Push — adapter
         uses: docker/build-push-action@v5
@@ -109,10 +120,10 @@ jobs:
             export IMAGE_TAG=${{ github.sha }}
 
             # Подтянуть новые образы
-            docker compose -f docker-compose.yml pull adapter ui
+            docker compose -f docker-compose.yml pull adapter ui blockchain
 
             # Перезапустить контейнеры без остановки senaite
-            docker compose -f docker-compose.yml up -d --no-deps adapter ui
+            docker compose -f docker-compose.yml up -d --no-deps adapter ui blockchain
 
             # Удалить старые образы
             docker image prune -f
@@ -127,6 +138,13 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             sleep 5
+            curl -sf -X POST http://localhost:8545 \
+              -H "Content-Type: application/json" \
+              -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+              | grep -q "result" \
+              && echo "Blockchain OK" \
+              || (echo "Blockchain FAILED" && exit 1)
+
             curl -sf http://localhost:8090/ | grep "LIMS Blockchain Adapter" \
               && echo "Adapter OK" \
               || (echo "Adapter FAILED" && exit 1)
@@ -139,3 +157,4 @@ jobs:
           echo "- UI: http://109.235.117.99:3000" >> $GITHUB_STEP_SUMMARY
           echo "- Adapter: http://@109.235.117.99:8090" >> $GITHUB_STEP_SUMMARY
           echo "- LIMS: http://109.235.117.99:8080" >> $GITHUB_STEP_SUMMARY
+          echo "- Blockchain RPC: http://109.235.117.99:8545" >> $GITHUB_STEP_SUMMARY
