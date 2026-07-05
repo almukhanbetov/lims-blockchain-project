@@ -108,6 +108,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .btn-primary:hover:not(:disabled) { background: var(--primary-h); }
 .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
 .btn-secondary:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.btn-sm       { padding: 5px 12px; font-size: 12px; }
 
 /* ── Alert ────────────────────────────────────────────────────────────────── */
 .alert        { border-radius: 8px; padding: 16px 20px; margin-top: 16px; }

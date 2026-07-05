@@ -40,6 +40,20 @@ const registryABI = `[
       {"name": "dataHash", "type": "bytes32"}
     ],
     "outputs": [{"name": "verified", "type": "bool"}]
+  },
+  {
+    "type": "function",
+    "name": "getHash",
+    "stateMutability": "view",
+    "inputs": [{"name": "limsRecordId", "type": "string"}],
+    "outputs": [
+      {"name": "limsId", "type": "string"},
+      {"name": "eventType", "type": "string"},
+      {"name": "dataHash", "type": "bytes32"},
+      {"name": "timestamp", "type": "uint256"},
+      {"name": "status", "type": "string"},
+      {"name": "registeredBy", "type": "address"}
+    ]
   }
 ]`
 
@@ -144,4 +158,22 @@ func (b *BlockchainClient) VerifyHash(limsRecordID, dataHash string) (bool, erro
 		return false, fmt.Errorf("unexpected verifyHash result type %T", results[0])
 	}
 	return verified, nil
+}
+
+// GetHash fetches the hash currently stored on chain for limsRecordID, hex-encoded.
+// Returns an error if the record doesn't exist — the contract reverts in that case.
+func (b *BlockchainClient) GetHash(limsRecordID string) (string, error) {
+	var results []interface{}
+	callOpts := &bind.CallOpts{Context: context.Background()}
+	if err := b.contract.Call(callOpts, &results, "getHash", limsRecordID); err != nil {
+		return "", fmt.Errorf("getHash call: %w", err)
+	}
+	if len(results) != 6 {
+		return "", fmt.Errorf("unexpected getHash result shape: %d values", len(results))
+	}
+	dataHash, ok := results[2].([32]byte)
+	if !ok {
+		return "", fmt.Errorf("unexpected getHash dataHash type %T", results[2])
+	}
+	return hex.EncodeToString(dataHash[:]), nil
 }

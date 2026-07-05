@@ -31,6 +31,10 @@ jobs:
         working-directory: adapter
         run: go build ./...
 
+      - name: Test
+        working-directory: adapter
+        run: go test ./...
+
   # ── Job 2: Сборка и публикация образов на Docker Hub ───────────────────────
   build-push:
     name: Build & Push Docker Images

@@ -28,13 +28,19 @@ type LimsEvent struct {
 }
 
 // HashRecord is what the adapter stores — mirrors what is sent to the smart contract.
-// Blockchain stores only hash + metadata, never full laboratory data.
+// It keeps every field that feeds the hash so /events/verify can be re-run later
+// against the exact same canonical payload that produced data_hash.
+// Blockchain stores only the hash itself, never full laboratory data.
 type HashRecord struct {
-	LimsRecordID string    `json:"lims_record_id"`
-	EventType    string    `json:"event_type"`
-	DataHash     string    `json:"data_hash"`
-	Status       string    `json:"status"`
-	RegisteredAt time.Time `json:"registered_at"`
+	LimsRecordID   string    `json:"lims_record_id"`
+	EventType      string    `json:"event_type"`
+	SampleID       string    `json:"sample_id"`
+	Result         string    `json:"result"`
+	UserID         string    `json:"user_id"`
+	Status         string    `json:"status"`
+	EventTimestamp string    `json:"event_timestamp"`
+	DataHash       string    `json:"data_hash"`
+	RegisteredAt   time.Time `json:"registered_at"`
 }
 
 // In-memory registry acts as a fast-read cache of whatever is on chain.
@@ -45,10 +51,27 @@ var (
 	registryMu sync.RWMutex
 
 	bc *BlockchainClient
+
+	contractAddress string
+	blockchainRPC   string
 )
 
-// calculateHash produces a deterministic SHA-256 hash from stable ordered fields.
-// The same event data will always produce the same hash — this is the core integrity guarantee.
+// comparedFields lists, in order, exactly which fields feed calculateHash.
+// Returned in /events/verify responses so callers can see what integrity is
+// actually checking without having to read the adapter source.
+var comparedFields = []string{
+	"lims_record_id",
+	"event_type",
+	"sample_id",
+	"result",
+	"user_id",
+	"status",
+	"event_timestamp",
+}
+
+// calculateHash produces a deterministic SHA-256 hash from stable ordered fields —
+// the canonical payload. The same fields always produce the same hash; this is
+// the core integrity guarantee, and comparedFields above must match this order.
 func calculateHash(e LimsEvent) string {
 	raw := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
 		e.LimsRecordID,
@@ -87,8 +110,8 @@ func main() {
 		port = "8090"
 	}
 
-	contractAddress := os.Getenv("CONTRACT_ADDRESS")
-	blockchainRPC := os.Getenv("BLOCKCHAIN_RPC")
+	contractAddress = os.Getenv("CONTRACT_ADDRESS")
+	blockchainRPC = os.Getenv("BLOCKCHAIN_RPC")
 	privateKey := os.Getenv("ADAPTER_PRIVATE_KEY")
 
 	if contractAddress != "" && blockchainRPC != "" && privateKey != "" {
@@ -103,6 +126,18 @@ func main() {
 		log.Println("Running in local registry mode (set CONTRACT_ADDRESS, BLOCKCHAIN_RPC and ADAPTER_PRIVATE_KEY to enable blockchain)")
 	}
 
+	r := newRouter()
+
+	log.Printf("LIMS Adapter listening on :%s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// newRouter builds the Gin engine and registers every route. Split out from
+// main so tests can exercise the HTTP surface directly via httptest without
+// touching os.Getenv or a real blockchain connection.
+func newRouter() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 	r.Use(corsMiddleware())
@@ -152,11 +187,15 @@ func main() {
 		hash := calculateHash(event)
 
 		record := HashRecord{
-			LimsRecordID: event.LimsRecordID,
-			EventType:    event.EventType,
-			DataHash:     hash,
-			Status:       event.Status,
-			RegisteredAt: time.Now().UTC(),
+			LimsRecordID:   event.LimsRecordID,
+			EventType:      event.EventType,
+			SampleID:       event.SampleID,
+			Result:         event.Result,
+			UserID:         event.UserID,
+			Status:         event.Status,
+			EventTimestamp: event.Timestamp,
+			DataHash:       hash,
+			RegisteredAt:   time.Now().UTC(),
 		}
 
 		// Store in local registry as a read cache
@@ -214,8 +253,9 @@ func main() {
 	})
 
 	// POST /events/verify
-	// Recalculates hash from submitted event data and compares with stored blockchain hash.
-	// This is the core integrity verification — detects any data modification in LIMS.
+	// Recomputes the hash from the submitted canonical payload and compares it
+	// against the hash on record (on chain if connected, else the local cache).
+	// This is the core integrity check — it detects any data modification in LIMS.
 	r.POST("/events/verify", func(c *gin.Context) {
 		var event LimsEvent
 		if err := c.ShouldBindJSON(&event); err != nil {
@@ -223,70 +263,59 @@ func main() {
 			return
 		}
 
-		computedHash := calculateHash(event)
+		actualHash := calculateHash(event)
 
+		var expectedHash, source string
 		if bc != nil {
-			verified, err := bc.VerifyHash(event.LimsRecordID, computedHash)
+			source = "blockchain"
+			hash, err := bc.GetHash(event.LimsRecordID)
 			if err != nil {
-				log.Printf("[VERIFY ERROR] %s: %v", event.LimsRecordID, err)
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"verified": false,
-					"message":  "Blockchain verification failed: " + err.Error(),
-					"hash":     computedHash,
+				log.Printf("[VERIFY NOT FOUND] %s (source: blockchain): %v", event.LimsRecordID, err)
+				c.JSON(http.StatusNotFound, gin.H{
+					"verified":        false,
+					"message":         "No hash registered on chain for this LIMS record ID",
+					"actual_hash":     actualHash,
+					"compared_fields": comparedFields,
+					"source":          source,
 				})
 				return
 			}
-
-			message := "Data integrity verified on blockchain"
-			if !verified {
-				message = "Hash mismatch on blockchain. Data may have been changed"
-			}
-			log.Printf("[VERIFY %v] %s (source: blockchain)", verified, event.LimsRecordID)
-			c.JSON(http.StatusOK, gin.H{
-				"verified": verified,
-				"message":  message,
-				"hash":     computedHash,
-				"source":   "blockchain",
-			})
-			return
-		}
-
-		registryMu.RLock()
-		stored, exists := registry[event.LimsRecordID]
-		registryMu.RUnlock()
-
-		if !exists {
-			c.JSON(http.StatusNotFound, gin.H{
-				"verified": false,
-				"message":  "No hash registered for this LIMS record ID",
-				"hash":     computedHash,
-				"source":   "local_cache",
-			})
-			return
-		}
-
-		if stored.DataHash == computedHash {
-			log.Printf("[VERIFY OK] %s (source: local_cache)", event.LimsRecordID)
-			c.JSON(http.StatusOK, gin.H{
-				"verified": true,
-				"message":  "Data integrity verified",
-				"hash":     computedHash,
-				"source":   "local_cache",
-			})
+			expectedHash = hash
 		} else {
-			log.Printf("[VERIFY FAIL] %s — hash mismatch (source: local_cache)", event.LimsRecordID)
-			c.JSON(http.StatusOK, gin.H{
-				"verified":      false,
-				"message":       "Hash mismatch. Data may have been changed",
-				"computed_hash": computedHash,
-				"stored_hash":   stored.DataHash,
-				"source":        "local_cache",
-			})
+			source = "local_cache"
+			registryMu.RLock()
+			stored, exists := registry[event.LimsRecordID]
+			registryMu.RUnlock()
+
+			if !exists {
+				c.JSON(http.StatusNotFound, gin.H{
+					"verified":        false,
+					"message":         "No hash registered for this LIMS record ID",
+					"actual_hash":     actualHash,
+					"compared_fields": comparedFields,
+					"source":          source,
+				})
+				return
+			}
+			expectedHash = stored.DataHash
 		}
+
+		verified := expectedHash == actualHash
+		message := "Data integrity verified"
+		if !verified {
+			message = "Hash mismatch. Data may have been changed"
+		}
+		log.Printf("[VERIFY %v] %s (source: %s)", verified, event.LimsRecordID, source)
+
+		c.JSON(http.StatusOK, gin.H{
+			"verified":        verified,
+			"message":         message,
+			"expected_hash":   expectedHash,
+			"actual_hash":     actualHash,
+			"compared_fields": comparedFields,
+			"source":          source,
+		})
 	})
 
-	log.Printf("LIMS Adapter listening on :%s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatal(err)
-	}
+	return r
 }

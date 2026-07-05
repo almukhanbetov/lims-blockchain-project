@@ -254,7 +254,7 @@ function RegisterEvent({ onSuccess }) {
 
 // ─── Реестр хэшей ─────────────────────────────────────────────────────────────
 
-function HashRegistry({ events, loading, onRefresh }) {
+function HashRegistry({ events, loading, onRefresh, onVerify }) {
   return (
     <div className="page">
       <div className="page-header">
@@ -280,6 +280,7 @@ function HashRegistry({ events, loading, onRefresh }) {
                   <th>Хэш данных</th>
                   <th>Статус</th>
                   <th>Зарегистрировано</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -294,6 +295,11 @@ function HashRegistry({ events, loading, onRefresh }) {
                     <td className="small">
                       {new Date(r.registered_at).toLocaleString('ru-RU')}
                     </td>
+                    <td>
+                      <button className="btn btn-secondary btn-sm" onClick={() => onVerify(r)}>
+                        Проверить эту запись
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -307,10 +313,26 @@ function HashRegistry({ events, loading, onRefresh }) {
 
 // ─── Верификация данных ────────────────────────────────────────────────────────
 
-function VerifyData() {
+function VerifyData({ prefill }) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
+
+  // "Проверить эту запись" in Hash Registry hands us a stored record —
+  // load its fields into the form so the user can just hit submit.
+  useEffect(() => {
+    if (!prefill) return
+    setForm({
+      lims_record_id: prefill.lims_record_id || '',
+      event_type: prefill.event_type || 'RESULT_VERIFIED',
+      sample_id: prefill.sample_id || '',
+      result: prefill.result || '',
+      user_id: prefill.user_id || '',
+      status: prefill.status || 'VERIFIED',
+      timestamp: prefill.event_timestamp || '',
+    })
+    setResult(null)
+  }, [prefill])
 
   const handleChange = e =>
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -391,14 +413,16 @@ function VerifyData() {
             {result.data.verified ? '✓ Целостность данных подтверждена' : '✗ Проверка целостности не пройдена'}
           </div>
           <div className="small">{result.data.message}</div>
-          {result.data.hash && (
-            <div className="mono small mt-8">{result.data.hash}</div>
-          )}
-          {result.data.computed_hash && (
+          {result.data.actual_hash && (
             <div className="small muted mt-8">
-              Вычислен:&nbsp; <span className="mono">{result.data.computed_hash.slice(0, 32)}…</span>
+              Ожидаемый (сохранён):&nbsp; <span className="mono">{result.data.expected_hash?.slice(0, 32) || '—'}…</span>
               <br />
-              Сохранён:&nbsp; <span className="mono">{result.data.stored_hash?.slice(0, 32)}…</span>
+              Фактический (пересчитан):&nbsp; <span className="mono">{result.data.actual_hash.slice(0, 32)}…</span>
+            </div>
+          )}
+          {result.data.compared_fields && (
+            <div className="small muted mt-8">
+              Сравниваемые поля: {result.data.compared_fields.join(', ')}
             </div>
           )}
         </div>
@@ -556,6 +580,12 @@ export default function App() {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(false)
   const [adapterInfo, setAdapterInfo] = useState(null)
+  const [verifyPrefill, setVerifyPrefill] = useState(null)
+
+  const handleVerifyRecord = record => {
+    setVerifyPrefill(record)
+    setPage('verify')
+  }
 
   const fetchEvents = useCallback(async () => {
     setLoading(true)
@@ -613,8 +643,10 @@ export default function App() {
       <main className="main">
         {page === 'dashboard' && <Dashboard events={events} adapterInfo={adapterInfo} />}
         {page === 'register' && <RegisterEvent onSuccess={fetchEvents} />}
-        {page === 'registry' && <HashRegistry events={events} loading={loading} onRefresh={fetchEvents} />}
-        {page === 'verify' && <VerifyData />}
+        {page === 'registry' && (
+          <HashRegistry events={events} loading={loading} onRefresh={fetchEvents} onVerify={handleVerifyRecord} />
+        )}
+        {page === 'verify' && <VerifyData prefill={verifyPrefill} />}
         {page === 'architecture' && <Architecture />}
       </main>
     </div>
