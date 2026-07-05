@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 
-const API = 'http://localhost:8090'
+const API = 'http://109.235.117.99:8090'
 
 const EVENT_TYPES = [
   'SAMPLE_CREATED',
@@ -544,10 +544,10 @@ function Architecture() {
 // ─── App ───────────────────────────────────────────────────────────────────────
 
 const PAGES = [
-  { id: 'dashboard',    label: 'Дашборд' },
-  { id: 'register',     label: 'Регистрация события' },
-  { id: 'registry',     label: 'Реестр хэшей' },
-  { id: 'verify',       label: 'Верификация данных' },
+  { id: 'dashboard', label: 'Дашборд' },
+  { id: 'register', label: 'Регистрация события' },
+  { id: 'registry', label: 'Реестр хэшей' },
+  { id: 'verify', label: 'Верификация данных' },
   { id: 'architecture', label: 'Архитектура' },
 ]
 
@@ -611,10 +611,10 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {page === 'dashboard'    && <Dashboard events={events} adapterInfo={adapterInfo} />}
-        {page === 'register'     && <RegisterEvent onSuccess={fetchEvents} />}
-        {page === 'registry'     && <HashRegistry events={events} loading={loading} onRefresh={fetchEvents} />}
-        {page === 'verify'       && <VerifyData />}
+        {page === 'dashboard' && <Dashboard events={events} adapterInfo={adapterInfo} />}
+        {page === 'register' && <RegisterEvent onSuccess={fetchEvents} />}
+        {page === 'registry' && <HashRegistry events={events} loading={loading} onRefresh={fetchEvents} />}
+        {page === 'verify' && <VerifyData />}
         {page === 'architecture' && <Architecture />}
       </main>
     </div>
